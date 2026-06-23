@@ -1,7 +1,4 @@
-<<<<<<< HEAD
-
 ![Object Detection](https://drive.google.com/uc?export=view&id=15pyink_QV06XZ1ra7MtEqTx1FgkyO0oS)
-
 
 ># Real-Time Object Detection with YOLOv5 using Python
 
@@ -44,6 +41,3 @@ The frame is displayed with bounding boxes and object labels.
 * Retail Analytics: Analyzing customer behavior in stores.
 
 >This project is a practical and exciting way to get started with deep learning, computer vision, and real-time applications using Python and YOLOv5.
-=======
-# Real_Time_Object_Detection_System
->>>>>>> 959c9cfeea6c310b08c1b239bec262f6fe35b06b
