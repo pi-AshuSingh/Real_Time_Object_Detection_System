@@ -10,6 +10,7 @@ import av
 import pandas as pd
 from datetime import datetime
 import streamlit.components.v1 as components
+from fpdf import FPDF
 
 # Initialize Streamlit Page Config
 st.set_page_config(page_title="DetectXpress Ultimate", page_icon="🏆", layout="wide")
@@ -23,10 +24,11 @@ st.markdown("""
     .stAlert { background: rgba(255, 255, 255, 0.05) !important; backdrop-filter: blur(10px) !important; border: 1px solid rgba(255, 255, 255, 0.1) !important; border-radius: 12px !important; color: #e2e8f0 !important; }
     [data-testid="stWebRtc"] { display: flex; justify-content: center; border-radius: 15px; overflow: hidden; box-shadow: 0 10px 30px -10px rgba(56, 189, 248, 0.3); }
     [data-testid="stElementContainer"] { border-radius: 12px; overflow: hidden; }
+    [data-testid="stMetricValue"] { color: #38bdf8 !important; font-weight: 800 !important; }
 </style>
 """, unsafe_allow_html=True)
 
-st.title("🏆 DetectXpress - Ultimate ADAS Prototype")
+st.title("🏆 DetectXpress - Ultimate ADAS Command Center")
 st.markdown("### Award-Winning Real-Time Object Detection & Behavioral Analysis")
 
 @st.cache_resource
@@ -55,7 +57,6 @@ class DetectXpressTransformer(VideoTransformerBase):
         
         # Expanded Metrics
         self.eyes_closed_frames = 0
-        self.smiles_detected = 0
         self.stress_level = 0
         self.eco_score = 100
         
@@ -68,12 +69,12 @@ class DetectXpressTransformer(VideoTransformerBase):
         self.ear_timeline = deque(maxlen=60)
         self.distance_timeline = deque(maxlen=60)
         self.speed_timeline = deque(maxlen=60)
-        self.object_counts = defaultdict(int)
         
         self.stats = {
             'total_detections': 0, 'critical_alerts': 0, 'drowsiness_alerts': 0,
             'cellphone_violations': 0, 'lane_departures': 0, 'red_light_violations': 0,
-            'alert_history': deque(maxlen=100)
+            'pedestrian_risks': 0, 'blind_spot_warnings': 0, 'weather_status': "Clear",
+            'min_ttc': 99.9, 'alert_history': deque(maxlen=100)
         }
 
     def speak(self, text, cooldown=10):
@@ -89,12 +90,13 @@ class DetectXpressTransformer(VideoTransformerBase):
         
         weather = "Clear"
         if brightness < 60: weather = "Night Mode"
-        elif contrast < 35: weather = "Poor Visibility (Fog/Rain)"
+        elif contrast < 35: weather = "Poor Visibility"
         
-        if weather == "Poor Visibility (Fog/Rain)":
-            self.speak("Warning, poor visibility detected. Reduce speed.")
+        if weather == "Poor Visibility":
+            self.speak("Warning, poor visibility detected. Reduce speed.", cooldown=30)
             
-        return weather, brightness, contrast
+        self.stats['weather_status'] = weather
+        return weather
 
     def detect_lane_departure(self, frame):
         h, w = frame.shape[:2]
@@ -112,7 +114,6 @@ class DetectXpressTransformer(VideoTransformerBase):
                 if slope < -0.5: left_lines.append(line[0])
                 elif slope > 0.5: right_lines.append(line[0])
                 
-        # Simple drift heuristic
         if len(left_lines) > 0 and len(right_lines) == 0: return "DRIFTING RIGHT"
         if len(right_lines) > 0 and len(left_lines) == 0: return "DRIFTING LEFT"
         return "CENTERED"
@@ -148,15 +149,16 @@ class DetectXpressTransformer(VideoTransformerBase):
         annotated = img.copy()
         
         # 1. Weather Analysis
-        weather, bright, cont = self.analyze_weather(img)
+        weather = self.analyze_weather(img)
         cv2.putText(annotated, f"Weather: {weather}", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 0), 2)
         
         # 2. Lane Departure Warning (LDW)
         lane_status = self.detect_lane_departure(img)
         if lane_status != "CENTERED":
             cv2.putText(annotated, f"LDW: {lane_status}", (annotated.shape[1]//2 - 100, 50), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 165, 255), 2)
-            self.stats['lane_departures'] += 1
-            if self.frame_count % 30 == 0: self.speak("Lane departure warning")
+            if self.frame_count % 30 == 0: 
+                self.speak("Lane departure warning", cooldown=10)
+                self.stats['lane_departures'] += 1
 
         # YOLO Inference
         results = model(img, conf=0.40, iou=0.45, imgsz=1280, augment=True, verbose=False)
@@ -174,7 +176,7 @@ class DetectXpressTransformer(VideoTransformerBase):
                 if cls_name == "cell phone":
                     cv2.rectangle(annotated, (x1,y1), (x2,y2), (0,0,255), 3)
                     cv2.putText(annotated, "PHONE DISTRACTION!", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
-                    self.stats['cellphone_violations'] += 1
+                    if self.frame_count % 15 == 0: self.stats['cellphone_violations'] += 1
                     self.speak("Please put down your phone immediately.", cooldown=15)
                     continue
                 
@@ -185,7 +187,7 @@ class DetectXpressTransformer(VideoTransformerBase):
                     cv2.putText(annotated, f"LIGHT: {light_state}", (x1, y1-10), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
                     if light_state == "RED":
                         self.speak("Red light ahead", cooldown=20)
-                        self.stats['red_light_violations'] += 1
+                        if self.frame_count % 30 == 0: self.stats['red_light_violations'] += 1
                     continue
                 
                 if cls_name not in KNOWN_HEIGHTS: continue
@@ -220,7 +222,6 @@ class DetectXpressTransformer(VideoTransformerBase):
             distance = (KNOWN_HEIGHTS.get(cls_name, 1.5) * FOCAL_LENGTH) / max(1, (y2 - y1))
             if closest_dist is None or distance < closest_dist: closest_dist = distance
             
-            # Physics: Speed & TTC
             speed = 0
             ttc = None
             if len(obj['history']) >= 5:
@@ -231,30 +232,32 @@ class DetectXpressTransformer(VideoTransformerBase):
                 if speed > max_speed: max_speed = speed
                 
                 # 5. Time-To-Collision (TTC)
-                # If bounding box is expanding rapidly (y2-y1 is growing), object is approaching
-                # Simplified TTC = Distance / Relative Speed
                 if speed > 2.0: 
                     ttc = distance / speed
-                    if ttc < 3.0: self.speak("Collision Imminent! Brake!", cooldown=5)
+                    if ttc < self.stats['min_ttc']: self.stats['min_ttc'] = round(ttc, 1)
+                    if ttc < 3.0: 
+                        self.speak("Collision Imminent! Brake!", cooldown=5)
             
             # 6. Pedestrian Intent
             if cls_name == "person" and len(obj['history']) > 5:
                 dx = obj['history'][-1][0] - obj['history'][0][0]
-                # Moving towards center
                 if (x1 < img.shape[1]//3 and dx > 10) or (x2 > 2*img.shape[1]//3 and dx < -10):
                     cv2.putText(annotated, "CROSSING RISK", (x1, y1-25), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,165,255), 2)
                     self.speak("Pedestrian crossing risk", cooldown=10)
+                    if self.frame_count % 30 == 0: self.stats['pedestrian_risks'] += 1
 
             # 7. Blind Spot Monitor
             if speed > 5.0 and (x1 < 50 or x2 > img.shape[1]-50) and distance < 15:
                 cv2.putText(annotated, "BLIND SPOT", (x1, y1-25), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0,0,255), 2)
                 self.speak("Vehicle in blind spot", cooldown=10)
+                if self.frame_count % 30 == 0: self.stats['blind_spot_warnings'] += 1
                 
             # 8. Eco-Driving Tracker
-            if speed > 15: self.eco_score = max(0, self.eco_score - 0.1) # Penalize excessive relative speed
+            if speed > 15: self.eco_score = max(0, self.eco_score - 0.1) 
             
             danger_lvl, color = self.get_danger_level(distance, ttc)
-            if danger_lvl in ['CRITICAL', 'CRITICAL_TTC']: self.stats['critical_alerts'] += 1
+            if danger_lvl in ['CRITICAL', 'CRITICAL_TTC']:
+                if self.frame_count % 15 == 0: self.stats['critical_alerts'] += 1
             
             cv2.rectangle(annotated, (x1,y1), (x2,y2), color, 2)
             cv2.putText(annotated, f"{cls_name} {distance:.1f}m", (x1, y1-5), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255,255,255), 1)
@@ -276,17 +279,14 @@ class DetectXpressTransformer(VideoTransformerBase):
             if self.stress_level > 80:
                 cv2.putText(annotated, "HIGH STRESS", (x, y-30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
             
-            if len(eyes) >= 2:
-                # Simplified EAR for demo
-                current_ear = 0.3
-            else:
-                current_ear = 0.1
+            if len(eyes) >= 2: current_ear = 0.3
+            else: current_ear = 0.1
                 
             if current_ear < 0.15:
                 self.eyes_closed_frames += 1
-                if self.eyes_closed_frames > DROWSY_THRESHOLD:
+                if self.eyes_closed_frames > 20:
                     self.speak("Wake up!", cooldown=5)
-                    self.stats['drowsiness_alerts'] += 1
+                    if self.frame_count % 15 == 0: self.stats['drowsiness_alerts'] += 1
             else:
                 self.eyes_closed_frames = 0
 
@@ -297,12 +297,6 @@ class DetectXpressTransformer(VideoTransformerBase):
             self.ear_timeline.append((current_time, current_ear))
             self.distance_timeline.append((current_time, closest_dist if closest_dist else 50))
             self.speed_timeline.append((current_time, max_speed))
-
-        # Dashboard HUD
-        cv2.rectangle(annotated, (10, img.shape[0]-120), (350, img.shape[0]-10), (0,0,0), -1)
-        cv2.putText(annotated, f"Eco Score: {int(self.eco_score)}", (20, img.shape[0]-90), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,255,0), 2)
-        cv2.putText(annotated, f"Stress Level: {int(self.stress_level)}%", (20, img.shape[0]-60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,165,255), 2)
-        cv2.putText(annotated, f"Phone Violations: {self.stats['cellphone_violations']}", (20, img.shape[0]-30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0,0,255), 2)
 
         return av.VideoFrame.from_ndarray(annotated, format="bgr24")
 
@@ -333,14 +327,98 @@ with col2:
 audio_placeholder = st.empty()
 
 st.markdown("---")
-st.markdown("### 📈 Live Telemetry Dashboard")
-c1, c2, c3 = st.columns(3)
-score_box = c1.empty(); obj_box = c2.empty(); alert_box = c3.empty()
-c4, c5, c6 = st.columns(3)
-ear_box = c4.empty(); dist_box = c5.empty(); speed_box = c6.empty()
+st.markdown("### 📊 Live Command Center Grid")
 
+# Metrics Grids
+st.markdown("#### Environmental & Surroundings")
+m1, m2, m3, m4, m5 = st.columns(5)
+with m1: weather_metric = st.empty()
+with m2: lane_metric = st.empty()
+with m3: red_light_metric = st.empty()
+with m4: blind_spot_metric = st.empty()
+with m5: ped_metric = st.empty()
+
+st.markdown("#### Driver Behavior & Physics")
+m6, m7, m8, m9, m10 = st.columns(5)
+with m6: phone_metric = st.empty()
+with m7: eco_metric = st.empty()
+with m8: stress_metric = st.empty()
+with m9: ttc_metric = st.empty()
+with m10: score_metric = st.empty()
+
+st.markdown("---")
+st.markdown("### 📄 Detailed Session Reporting")
 report_box = st.empty()
 
+def generate_pdf_report(data):
+    pdf = FPDF()
+    pdf.add_page()
+    
+    # Title
+    pdf.set_font("Helvetica", "B", 18)
+    pdf.cell(0, 15, "DETECTXPRESS ULTIMATE - ADAS DRIVING REPORT", new_x="LMARGIN", new_y="NEXT", align="C")
+    
+    # Executive Summary
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.ln(10)
+    pdf.cell(0, 10, "1. Executive Summary", new_x="LMARGIN", new_y="NEXT")
+    
+    pdf.set_font("Helvetica", "", 12)
+    dur = int(time.time() - data['start'])
+    mins, secs = divmod(dur, 60)
+    final_score = data['score_timeline'][-1][1] if data['score_timeline'] else 100
+    
+    pdf.cell(0, 8, f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Total Driving Time: {mins} minutes, {secs} seconds", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Overall Safety Score: {final_score} / 100", new_x="LMARGIN", new_y="NEXT")
+    
+    # Environmental Log
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.ln(5)
+    pdf.cell(0, 10, "2. Environmental Log", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(0, 8, f"Ending Weather Conditions: {data['stats']['weather_status']}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Red Light Violations Prevented: {data['stats']['red_light_violations']}", new_x="LMARGIN", new_y="NEXT")
+    
+    # Behavioral Audit
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.ln(5)
+    pdf.cell(0, 10, "3. Behavioral Audit", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(0, 8, f"Smartphone Distraction Violations: {data['stats']['cellphone_violations']}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Peak Driver Stress Level: {int(data['stress'])}%", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Drowsiness (Micro-Sleep) Alerts: {data['stats']['drowsiness_alerts']}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Eco-Driving Efficiency Score: {int(data['eco'])} / 100", new_x="LMARGIN", new_y="NEXT")
+    
+    # Critical Incidents
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.ln(5)
+    pdf.cell(0, 10, "4. Critical Incident Report", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "", 12)
+    pdf.cell(0, 8, f"Forward Collision Alerts: {data['stats']['critical_alerts']}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Minimum Time-To-Collision (TTC) Recorded: {data['stats']['min_ttc']} seconds", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Lane Departure Warnings (LDW): {data['stats']['lane_departures']}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Blind Spot Risks Avoided: {data['stats']['blind_spot_warnings']}", new_x="LMARGIN", new_y="NEXT")
+    pdf.cell(0, 8, f"Pedestrian Crossing Interventions: {data['stats']['pedestrian_risks']}", new_x="LMARGIN", new_y="NEXT")
+    
+    # Final Verdict
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.ln(5)
+    pdf.cell(0, 10, "5. Final Assessment Verdict", new_x="LMARGIN", new_y="NEXT")
+    pdf.set_font("Helvetica", "I", 12)
+    
+    if final_score >= 85 and data['stats']['cellphone_violations'] == 0:
+        verdict = "EXCELLENT: The driver operated the vehicle safely with high efficiency and attentiveness."
+    elif final_score >= 60:
+        verdict = "FAIR: The driver showed moderate safety compliance. Caution is advised regarding distractions."
+    else:
+        verdict = "POOR: The driver exhibited highly dangerous behavior. Immediate intervention recommended."
+        
+    pdf.multi_cell(0, 8, verdict)
+    
+    return bytes(pdf.output())
+
+# Polling Loop
 if ctx.state.playing:
     while True:
         if ctx.video_processor:
@@ -360,48 +438,29 @@ if ctx.state.playing:
                 'stress': proc.stress_level, 'score_timeline': list(proc.score_timeline)
             }
             
-            # Render Charts
-            if len(proc.score_timeline) > 0:
-                df = pd.DataFrame(list(proc.score_timeline), columns=['Time', 'Val'])
-                df['Sec'] = (current_t - df['Time']).apply(lambda x: -round(x))
-                with score_box.container():
-                    st.markdown("#### 💯 Safety Score")
-                    st.line_chart(df.set_index('Sec')['Val'], height=200, color="#38bdf8")
+            # Update Metrics Grid
+            weather_metric.metric("Weather Status", proc.stats['weather_status'])
+            lane_metric.metric("Lane Departures", proc.stats['lane_departures'])
+            red_light_metric.metric("Red Light Violations", proc.stats['red_light_violations'])
+            blind_spot_metric.metric("Blind Spot Risks", proc.stats['blind_spot_warnings'])
+            ped_metric.metric("Pedestrian Risks", proc.stats['pedestrian_risks'])
             
-            with obj_box.container():
-                st.markdown("#### 🚗 Eco-Driving Score")
-                st.metric("Efficiency Rating", f"{int(proc.eco_score)}/100")
-                
-            with alert_box.container():
-                st.markdown("#### ⚠️ Violations")
-                st.metric("Cell Phone Distractions", proc.stats['cellphone_violations'])
-
-            if len(proc.ear_timeline) > 0:
-                df = pd.DataFrame(list(proc.ear_timeline), columns=['Time', 'Val'])
-                df['Sec'] = (current_t - df['Time']).apply(lambda x: -round(x))
-                with ear_box.container():
-                    st.markdown("#### 👁️ Drowsiness (EAR)")
-                    st.line_chart(df.set_index('Sec')['Val'], height=200, color="#fbbf24")
-                    
-            if len(proc.distance_timeline) > 0:
-                df = pd.DataFrame(list(proc.distance_timeline), columns=['Time', 'Val'])
-                df['Sec'] = (current_t - df['Time']).apply(lambda x: -round(x))
-                with dist_box.container():
-                    st.markdown("#### 📏 Closest Threat (m)")
-                    st.line_chart(df.set_index('Sec')['Val'], height=200, color="#10b981")
-                    
-            if len(proc.speed_timeline) > 0:
-                df = pd.DataFrame(list(proc.speed_timeline), columns=['Time', 'Val'])
-                df['Sec'] = (current_t - df['Time']).apply(lambda x: -round(x))
-                with speed_box.container():
-                    st.markdown("#### ⚡ Driver Stress Level")
-                    st.line_chart(df.set_index('Sec')['Val'] * 0 + proc.stress_level, height=200, color="#a855f7")
+            phone_metric.metric("Phone Distractions", proc.stats['cellphone_violations'])
+            eco_metric.metric("Eco-Driving Score", f"{int(proc.eco_score)}/100")
+            stress_metric.metric("Driver Stress", f"{int(proc.stress_level)}%")
+            ttc_metric.metric("Min TTC (s)", f"{proc.stats['min_ttc']}s" if proc.stats['min_ttc'] < 99 else "N/A")
+            
+            current_score = proc.score_timeline[-1][1] if proc.score_timeline else 100
+            score_metric.metric("Overall Safety Score", f"{current_score}/100")
 
         time.sleep(1.0)
 
 if 'report_data' in st.session_state:
-    data = st.session_state['report_data']
-    dur = int(time.time() - data['start'])
-    report = f"--- DETECTXPRESS ULTIMATE DRIVING REPORT ---\nDuration: {dur}s\nViolations: {data['stats']['cellphone_violations']}\nEco Score: {int(data['eco'])}\n"
+    pdf_bytes = generate_pdf_report(st.session_state['report_data'])
     with report_box.container():
-        st.download_button("⬇️ Download Final Report", report, file_name="Award_Winning_Report.txt")
+        st.download_button(
+            label="⬇️ Download Highly Detailed Report (PDF)",
+            data=pdf_bytes,
+            file_name=f"DetectXpress_Ultimate_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+            mime="application/pdf"
+        )
