@@ -8,6 +8,7 @@ import time
 from collections import deque, defaultdict
 import av
 import pandas as pd
+from datetime import datetime
 
 # Initialize Streamlit Page Config
 st.set_page_config(page_title="DetectXpress Advanced", page_icon="👁️", layout="wide")
@@ -22,7 +23,7 @@ st.markdown("""
     }
     
     /* Glowing gradient text for headers */
-    h1, h2, h3 {
+    h1, h2, h3, h4 {
         background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8);
         -webkit-background-clip: text;
         -webkit-text-fill-color: transparent;
@@ -100,8 +101,11 @@ class DetectXpressTransformer(VideoTransformerBase):
         self.object_tracker = {}
         self.detection_history = defaultdict(lambda: deque(maxlen=10))
         
-        # UI Chart Data
+        # UI Chart Data (Rolling 60 seconds)
         self.score_timeline = deque(maxlen=60)
+        self.ear_timeline = deque(maxlen=60)
+        self.distance_timeline = deque(maxlen=60)
+        self.speed_timeline = deque(maxlen=60)
         self.object_counts = defaultdict(int)
         
         self.stats = {
@@ -203,16 +207,6 @@ class DetectXpressTransformer(VideoTransformerBase):
         if h == 0: return 0.3
         return max(0.1, min(0.5, avg_v / h))
 
-    def detect_yawn(self, face_roi):
-        h, w = face_roi.shape[:2]
-        mouth_region = face_roi[int(h*0.6):, int(w*0.2):int(w*0.8)]
-        gray_mouth = cv2.cvtColor(mouth_region, cv2.COLOR_BGR2GRAY)
-        _, thresh = cv2.threshold(gray_mouth, 60, 255, cv2.THRESH_BINARY)
-        white_pixels = cv2.countNonZero(thresh)
-        total = mouth_region.shape[0] * mouth_region.shape[1]
-        if total == 0: return False
-        return (white_pixels / total) > 0.3
-
     def log_event(self, event, level='INFO'):
         current_time = time.time()
         last_time = self.stats['last_alert_time'].get(event, 0)
@@ -273,6 +267,7 @@ class DetectXpressTransformer(VideoTransformerBase):
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
+        current_time = time.time()
         
         # Night mode
         if self.detect_night_mode(img):
@@ -287,6 +282,8 @@ class DetectXpressTransformer(VideoTransformerBase):
         results = model(processed, conf=0.40, iou=0.45, imgsz=640, verbose=False)
         
         detections = []
+        closest_dist = None
+        
         for result in results:
             for box in result.boxes:
                 x1, y1, x2, y2 = map(int, box.xyxy[0])
@@ -300,14 +297,15 @@ class DetectXpressTransformer(VideoTransformerBase):
                     if conf < (0.50 if class_name in ['person', 'car', 'truck', 'bus'] else 0.40): continue
                     
                     self.stats['total_detections'] += 1
-                    
-                    # Track counts for charts
-                    if self.frame_count % 10 == 0:
-                        self.object_counts[class_name] += 1
+                    if self.frame_count % 10 == 0: self.object_counts[class_name] += 1
                     
                     distance = self.estimate_distance(y2 - y1, class_name)
-                    danger_level, color = self.get_danger_level(distance)
                     
+                    if distance is not None:
+                        if closest_dist is None or distance < closest_dist:
+                            closest_dist = distance
+                    
+                    danger_level, color = self.get_danger_level(distance)
                     detections.append({'class': class_name, 'bbox': [x1, y1, x2, y2]})
                     
                     cv2.rectangle(annotated, (x1, y1), (x2, y2), color, 2)
@@ -321,39 +319,53 @@ class DetectXpressTransformer(VideoTransformerBase):
                         cv2.rectangle(annotated, (0, 0), (annotated.shape[1], annotated.shape[0]), (0, 0, 255), 10)
                         cv2.putText(annotated, "⚠️ COLLISION RISK!", (50, 100), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 4)
 
+        # Track Chart: Closest Distance
+        if len(self.distance_timeline) == 0 or (current_time - self.distance_timeline[-1][0]) > 1.0:
+            self.distance_timeline.append((current_time, closest_dist if closest_dist else 50.0)) # 50m default safe distance
+
         # Speed estimation
         tracked = self.track_objects(detections)
+        max_speed = 0
         for obj_id, obj_data in tracked.items():
             speed = self.estimate_speed(obj_data)
             if speed and speed > 0:
+                if speed > max_speed: max_speed = speed
                 x1, y1, x2, y2 = obj_data['bbox']
                 cv2.putText(annotated, f"{speed} m/s", (x1, y2 + 20), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2)
+                
+        # Track Chart: Speed
+        if len(self.speed_timeline) == 0 or (current_time - self.speed_timeline[-1][0]) > 1.0:
+            self.speed_timeline.append((current_time, max_speed))
 
         # Face & EAR
         faces = face_cascade.detectMultiScale(gray, 1.05, 7, minSize=(80, 80))
+        current_ear = 0.3
         for (x, y, w, h) in faces[:1]:
             cv2.rectangle(annotated, (x, y), (x+w, y+h), (0, 255, 255), 2)
             roi_gray = gray[y:y+h, x:x+w]
             eyes = eye_cascade.detectMultiScale(roi_gray, 1.1, 5, minSize=(20, 20))
             
             valid_eyes = [eye for eye in eyes if eye[1] < h * 0.6]
-            ear = 0.3
             if len(valid_eyes) >= 2:
                 eye_points = [(x + ex + ew//2, y + ey + eh//2) for ex, ey, ew, eh in valid_eyes[:2]]
-                ear = self.calculate_eye_aspect_ratio(eye_points)
+                current_ear = self.calculate_eye_aspect_ratio(eye_points)
                 
-            if len(valid_eyes) >= 2 and ear > 0.20:
+            if len(valid_eyes) >= 2 and current_ear > 0.20:
                 self.eyes_closed_frames = max(0, self.eyes_closed_frames - 5)
-                cv2.putText(annotated, f"✅ EYES OPEN ({ear:.2f})", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
-            elif ear < 0.15:
+                cv2.putText(annotated, f"✅ EYES OPEN ({current_ear:.2f})", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+            elif current_ear < 0.15:
                 self.eyes_closed_frames += 1
                 if self.eyes_closed_frames > DROWSY_THRESHOLD:
                     self.stats['drowsiness_alerts'] += 1
                     self.log_event('DROWSINESS', 'CRITICAL')
                     cv2.putText(annotated, "😴 WAKE UP!", (50, 150), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 0, 255), 4)
-                cv2.putText(annotated, f"😴 CLOSED ({ear:.2f})", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
+                cv2.putText(annotated, f"😴 CLOSED ({current_ear:.2f})", (x, y - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2)
             else:
                 self.eyes_closed_frames = max(0, self.eyes_closed_frames - 2)
+                
+        # Track Chart: EAR
+        if len(self.ear_timeline) == 0 or (current_time - self.ear_timeline[-1][0]) > 1.0:
+            self.ear_timeline.append((current_time, current_ear))
 
         # Draw full dashboard on screen
         score = self.calculate_safety_score()
@@ -398,47 +410,118 @@ with col2:
 st.markdown("---")
 st.markdown("### 📈 Live Telemetry Dashboard")
 
-# Chart Placeholders
+# Chart Placeholders (Row 1)
 chart_col1, chart_col2, chart_col3 = st.columns(3)
 score_chart_box = chart_col1.empty()
 obj_chart_box = chart_col2.empty()
 alert_chart_box = chart_col3.empty()
+
+# Chart Placeholders (Row 2)
+chart_col4, chart_col5, chart_col6 = st.columns(3)
+ear_chart_box = chart_col4.empty()
+dist_chart_box = chart_col5.empty()
+speed_chart_box = chart_col6.empty()
+
+st.markdown("---")
+st.markdown("### 📄 End of Session Reporting")
+report_box = st.empty()
+
+def generate_report_text(data):
+    duration = int(time.time() - data['session_start'])
+    mins, secs = divmod(duration, 60)
+    score = data['score_timeline'][-1][1] if data['score_timeline'] else 100
+    
+    report = f"====================================\n"
+    report += f" DETECTXPRESS DRIVING REPORT\n"
+    report += f"====================================\n"
+    report += f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+    report += f"Session Duration: {mins}m {secs}s\n"
+    report += f"Final Safety Score: {score}/100\n\n"
+    
+    report += f"--- EVENT SUMMARY ---\n"
+    report += f"Total Detections: {data['stats']['total_detections']}\n"
+    report += f"Critical Collision Alerts: {data['stats']['critical_alerts']}\n"
+    report += f"Drowsiness (EAR) Alerts: {data['stats']['drowsiness_alerts']}\n\n"
+    
+    report += f"--- OBJECTS ENCOUNTERED ---\n"
+    for obj, count in data['object_counts'].items():
+        report += f"- {obj.capitalize()}: {count}\n"
+        
+    report += f"\n====================================\n"
+    report += f"Verdict: "
+    if score > 85: report += "Excellent Driving. Safe and attentive."
+    elif score > 60: report += "Fair Driving. Caution advised."
+    else: report += "Poor Driving. High risk of collision or fatigue."
+    report += f"\n====================================\n"
+    return report
 
 # Polling Loop to Extract Data from WebRTC Thread
 if ctx.state.playing:
     while True:
         if ctx.video_processor:
             proc = ctx.video_processor
+            current_t = time.time()
             
-            # 1. Update Safety Score Line Chart
+            # Save data to session state for the report generator
+            st.session_state['report_data'] = {
+                'session_start': proc.session_start,
+                'stats': proc.stats,
+                'object_counts': proc.object_counts,
+                'score_timeline': list(proc.score_timeline)
+            }
+            
+            # Row 1 Charts
             if len(proc.score_timeline) > 0:
                 df_score = pd.DataFrame(list(proc.score_timeline), columns=['Time', 'Safety Score'])
-                # Normalize time to "Seconds Ago"
-                current_t = time.time()
                 df_score['Seconds Ago'] = (current_t - df_score['Time']).apply(lambda x: -round(x))
-                df_score = df_score.set_index('Seconds Ago')
                 with score_chart_box.container():
                     st.markdown("#### 💯 Safety Score Timeline")
-                    st.line_chart(df_score['Safety Score'], height=250, color="#38bdf8")
+                    st.line_chart(df_score.set_index('Seconds Ago')['Safety Score'], height=200, color="#38bdf8")
             
-            # 2. Update Object Breakdown Chart
             if len(proc.object_counts) > 0:
-                df_objs = pd.DataFrame(list(proc.object_counts.items()), columns=['Object', 'Count'])
-                df_objs = df_objs.set_index('Object')
+                df_objs = pd.DataFrame(list(proc.object_counts.items()), columns=['Object', 'Count']).set_index('Object')
                 with obj_chart_box.container():
                     st.markdown("#### 🚗 Detected Objects")
-                    st.bar_chart(df_objs, height=250, color="#818cf8")
+                    st.bar_chart(df_objs, height=200, color="#818cf8")
                     
-            # 3. Update Alerts Breakdown Chart
-            alert_data = {
-                'Critical': proc.stats['critical_alerts'],
-                'Drowsiness': proc.stats['drowsiness_alerts'],
-                'Pedestrian': proc.stats['pedestrian_warnings']
-            }
+            alert_data = {'Critical': proc.stats['critical_alerts'], 'Drowsiness': proc.stats['drowsiness_alerts']}
             if sum(alert_data.values()) > 0:
                 df_alerts = pd.DataFrame(list(alert_data.items()), columns=['Alert Type', 'Count']).set_index('Alert Type')
                 with alert_chart_box.container():
                     st.markdown("#### ⚠️ Alert Distribution")
-                    st.bar_chart(df_alerts, height=250, color="#f43f5e")
+                    st.bar_chart(df_alerts, height=200, color="#f43f5e")
+
+            # Row 2 Charts
+            if len(proc.ear_timeline) > 0:
+                df_ear = pd.DataFrame(list(proc.ear_timeline), columns=['Time', 'EAR'])
+                df_ear['Seconds Ago'] = (current_t - df_ear['Time']).apply(lambda x: -round(x))
+                with ear_chart_box.container():
+                    st.markdown("#### 👁️ Drowsiness (EAR) Timeline")
+                    st.line_chart(df_ear.set_index('Seconds Ago')['EAR'], height=200, color="#fbbf24")
                     
+            if len(proc.distance_timeline) > 0:
+                df_dist = pd.DataFrame(list(proc.distance_timeline), columns=['Time', 'Distance (m)'])
+                df_dist['Seconds Ago'] = (current_t - df_dist['Time']).apply(lambda x: -round(x))
+                with dist_chart_box.container():
+                    st.markdown("#### 📏 Closest Object Distance (m)")
+                    st.line_chart(df_dist.set_index('Seconds Ago')['Distance (m)'], height=200, color="#10b981")
+                    
+            if len(proc.speed_timeline) > 0:
+                df_spd = pd.DataFrame(list(proc.speed_timeline), columns=['Time', 'Max Speed (m/s)'])
+                df_spd['Seconds Ago'] = (current_t - df_spd['Time']).apply(lambda x: -round(x))
+                with speed_chart_box.container():
+                    st.markdown("#### ⚡ Max Object Speed (m/s)")
+                    st.line_chart(df_spd.set_index('Seconds Ago')['Max Speed (m/s)'], height=200, color="#a855f7")
+
         time.sleep(1.0)
+
+# Outside loop - render download button if we have data saved
+if 'report_data' in st.session_state:
+    with report_box.container():
+        report_txt = generate_report_text(st.session_state['report_data'])
+        st.download_button(
+            label="⬇️ Download Final Driving Report (TXT)",
+            data=report_txt,
+            file_name=f"DetectXpress_Report_{datetime.now().strftime('%Y%m%d_%H%M')}.txt",
+            mime="text/plain"
+        )
