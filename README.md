@@ -1,42 +1,86 @@
+<div align="center">
 
 # 🏆 DetectXpress Ultimate Edition
 ### *Advanced Real-Time Driver Assistance System (ADAS)*
 
-**🟢 Live Deployment:** [https://detect-xpress.streamlit.app/](https://detect-xpress.streamlit.app/)
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://detect-xpress.streamlit.app/)
+[![YOLO11x](https://img.shields.io/badge/YOLO-11x-00FFFF?style=for-the-badge&logo=ai)](https://github.com/ultralytics/ultralytics)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 
-DetectXpress Ultimate is a state-of-the-art, 10-feature intelligent ADAS Command Center. Powered by **YOLO11x** (the most advanced model in the YOLO series), it performs real-time physics calculations, driver behavioral auditing, and environmental telemetry straight from your web browser!
+*A state-of-the-art, **10-feature** intelligent ADAS Command Center. Powered by the massive **YOLO11x** engine, it performs real-time physics calculations, driver behavioral auditing, and environmental telemetry directly from your web browser.*
+
+</div>
+
+---
 
 ## 🌟 The 10 Advanced Features
-1. **Time-To-Collision (TTC) Engine:** Calculates real-time collision risks based on vehicle bounding box scaling.
-2. **Pedestrian Intent Prediction:** Identifies pedestrians near the center of the frame and issues alerts.
-3. **Lane Departure Warning (LDW):** Tracks road bounds and alerts if the vehicle drifts out of lane.
-4. **Weather & Visibility Analyzer:** Uses contrast and brightness heuristics to detect fog, rain, or night conditions.
-5. **Red Light Violation Detector:** Correlates traffic lights with the vehicle's speed.
-6. **Blind Spot Monitoring:** Tracks vehicles continuously occupying the far edges of the frame.
-7. **Smartphone Distraction AI:** Detects if the driver is holding a cell phone.
-8. **Road Rage & Stress Monitor:** Calculates stress percentage based on sudden braking, high speeds, and aggressive lane changes.
-9. **Eco-Driving Efficiency Score:** Grades the driver's fuel efficiency out of 100 based on smooth acceleration and braking.
-10. **Dynamic Voice Synthesis:** Real-time AI voice alerts powered by Web Speech API directly in the browser!
+
+| Feature | Description | Physics / Logic Engine |
+| :--- | :--- | :--- |
+| 💥 **Time-To-Collision (TTC)** | Calculates real-time collision risks. | Tracks bounding box spatial expansion. |
+| 🚶 **Pedestrian Intent** | Predicts if pedestrians will cross. | Maps central "danger zone" intersections. |
+| 🛣️ **Lane Departure (LDW)** | Alerts if the vehicle drifts out of lane. | Tracks horizontal road bounds. |
+| 🌤️ **Weather Analyzer** | Detects fog, rain, or night conditions. | Computes pixel contrast & brightness heuristics. |
+| 🛑 **Red Light Violations** | Prevents running red lights. | Color-masks detected traffic lights. |
+| 🚗 **Blind Spot Monitor** | Warns of adjacent vehicles. | Tracks extreme left/right frame matrices. |
+| 📱 **Smartphone Distraction** | Detects if the driver is holding a phone. | YOLO object classification mapping. |
+| 💢 **Road Rage Monitor** | Audits aggressive driving & stress. | Time-series analysis of velocity changes. |
+| 🌱 **Eco-Driving Score** | Grades fuel efficiency (0-100). | Penalizes hard braking and heavy acceleration. |
+| 🗣️ **Dynamic AI Voice** | Real-time audible safety alerts. | `window.speechSynthesis` API integration. |
+
+---
 
 ## 📄 Automated PDF Reporting
-At the end of every driving session, you can download a **Highly Detailed Assessment Report (PDF)**. The report features:
-* Executive Summary & Overall Safety Score
-* Environmental & Behavioral Audits
-* Critical Incident Logs
-* **High-Resolution Telemetry Graphs:** (Safety Score, Drowsiness, and Target Speed vs Time) plotted natively with Matplotlib.
 
-## 🚀 Built With
-* **AI Engine:** Ultralytics YOLO11x
-* **Frontend:** Streamlit & Streamlit-WebRTC
-* **Data & Analytics:** Pandas, NumPy, Matplotlib
-* **Reporting:** FPDF2
+At the end of every driving session, the system compiles the massive internal telemetry logs into a **Highly Detailed Assessment Report (PDF)**.
+
+<div align="center">
+  <img src="https://img.shields.io/badge/Data-FPDF2-red?style=flat-square&logo=pdf" />
+  <img src="https://img.shields.io/badge/Charts-Matplotlib-orange?style=flat-square&logo=python" />
+</div>
+
+> **The report includes:**
+> - 📋 **Executive Summary:** Overall Safety Score and Drive Duration.
+> - 🚨 **Incident Logs:** Precise tallies of lane departures, blind spot interventions, and distractions.
+> - 📈 **Telemetry Graphs:** High-resolution charts tracking *Safety Score*, *Micro-Sleeps (EAR)*, and *Target Speed* over time, plotted natively with Matplotlib.
+
+---
+
+## 🚀 The Technology Stack
+
+<div align="center">
+
+| Domain | Technologies |
+| :---: | :---: |
+| **AI & Physics** | `Ultralytics YOLO11x` • `PyTorch` • `NumPy` |
+| **Computer Vision** | `OpenCV (Headless)` • `Haar Cascades` |
+| **Web Frontend** | `Streamlit` • `HTML5` • `CSS3 Glassmorphism` |
+| **Real-Time Data** | `Streamlit-WebRTC` • `Pandas` |
+
+</div>
+
+---
 
 ## 💻 Local Execution
-To run this powerhouse locally:
+
+To run this powerhouse locally on your own machine:
+
 ```bash
+# 1. Create a virtual environment
 python -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate  # On Windows use: .venv\Scripts\activate
+
+# 2. Install strictly versioned dependencies
 pip install -r requirements.txt
+
+# 3. Launch the Ultimate Command Center
 streamlit run app_advanced.py
 ```
-*(Note: Streamlit Community Cloud and local environments run `app_advanced.py` as the main entry point.)*
+
+> **Note:** Both Streamlit Community Cloud and local environments utilize `app_advanced.py` as the primary entry point.
+
+---
+<div align="center">
+  <i>Built for safety. Engineered for the future.</i>
+</div>
