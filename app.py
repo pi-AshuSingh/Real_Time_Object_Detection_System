@@ -7,6 +7,7 @@ import math
 import time
 from collections import deque, defaultdict
 import av
+import pandas as pd
 
 # Initialize Streamlit Page Config
 st.set_page_config(page_title="DetectXpress Advanced", page_icon="👁️", layout="wide")
@@ -52,6 +53,12 @@ st.markdown("""
         overflow: hidden;
         box-shadow: 0 10px 30px -10px rgba(56, 189, 248, 0.3);
     }
+    
+    /* Chart Containers */
+    [data-testid="stElementContainer"] {
+        border-radius: 12px;
+        overflow: hidden;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -92,6 +99,10 @@ class DetectXpressTransformer(VideoTransformerBase):
         self.frame_count = 0
         self.object_tracker = {}
         self.detection_history = defaultdict(lambda: deque(maxlen=10))
+        
+        # UI Chart Data
+        self.score_timeline = deque(maxlen=60)
+        self.object_counts = defaultdict(int)
         
         self.stats = {
             'total_detections': 0,
@@ -252,7 +263,13 @@ class DetectXpressTransformer(VideoTransformerBase):
             if c_60s == 0 and w_recent == 0: score += 15
             
         if self.stats['total_detections'] > 10: score += 5
-        return max(0, min(100, int(score)))
+        final_score = max(0, min(100, int(score)))
+        
+        # Record timeline for charts (1 per second max)
+        if len(self.score_timeline) == 0 or (current_time - self.score_timeline[-1][0]) > 1.0:
+            self.score_timeline.append((current_time, final_score))
+            
+        return final_score
 
     def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
@@ -283,6 +300,11 @@ class DetectXpressTransformer(VideoTransformerBase):
                     if conf < (0.50 if class_name in ['person', 'car', 'truck', 'bus'] else 0.40): continue
                     
                     self.stats['total_detections'] += 1
+                    
+                    # Track counts for charts
+                    if self.frame_count % 10 == 0:
+                        self.object_counts[class_name] += 1
+                    
                     distance = self.estimate_distance(y2 - y1, class_name)
                     danger_level, color = self.get_danger_level(distance)
                     
@@ -365,10 +387,58 @@ with col2:
     st.markdown("### 📹 Secure Live Feed")
     st.info("Click **Start** to allow browser camera access and begin processing locally.")
 
-    webrtc_streamer(
+    ctx = webrtc_streamer(
         key="detectxpress",
         mode=WebRtcMode.SENDRECV,
         video_processor_factory=DetectXpressTransformer,
         media_stream_constraints={"video": True, "audio": False},
         async_processing=True
     )
+
+st.markdown("---")
+st.markdown("### 📈 Live Telemetry Dashboard")
+
+# Chart Placeholders
+chart_col1, chart_col2, chart_col3 = st.columns(3)
+score_chart_box = chart_col1.empty()
+obj_chart_box = chart_col2.empty()
+alert_chart_box = chart_col3.empty()
+
+# Polling Loop to Extract Data from WebRTC Thread
+if ctx.state.playing:
+    while True:
+        if ctx.video_processor:
+            proc = ctx.video_processor
+            
+            # 1. Update Safety Score Line Chart
+            if len(proc.score_timeline) > 0:
+                df_score = pd.DataFrame(list(proc.score_timeline), columns=['Time', 'Safety Score'])
+                # Normalize time to "Seconds Ago"
+                current_t = time.time()
+                df_score['Seconds Ago'] = (current_t - df_score['Time']).apply(lambda x: -round(x))
+                df_score = df_score.set_index('Seconds Ago')
+                with score_chart_box.container():
+                    st.markdown("#### 💯 Safety Score Timeline")
+                    st.line_chart(df_score['Safety Score'], height=250, color="#38bdf8")
+            
+            # 2. Update Object Breakdown Chart
+            if len(proc.object_counts) > 0:
+                df_objs = pd.DataFrame(list(proc.object_counts.items()), columns=['Object', 'Count'])
+                df_objs = df_objs.set_index('Object')
+                with obj_chart_box.container():
+                    st.markdown("#### 🚗 Detected Objects")
+                    st.bar_chart(df_objs, height=250, color="#818cf8")
+                    
+            # 3. Update Alerts Breakdown Chart
+            alert_data = {
+                'Critical': proc.stats['critical_alerts'],
+                'Drowsiness': proc.stats['drowsiness_alerts'],
+                'Pedestrian': proc.stats['pedestrian_warnings']
+            }
+            if sum(alert_data.values()) > 0:
+                df_alerts = pd.DataFrame(list(alert_data.items()), columns=['Alert Type', 'Count']).set_index('Alert Type')
+                with alert_chart_box.container():
+                    st.markdown("#### ⚠️ Alert Distribution")
+                    st.bar_chart(df_alerts, height=250, color="#f43f5e")
+                    
+        time.sleep(1.0)
