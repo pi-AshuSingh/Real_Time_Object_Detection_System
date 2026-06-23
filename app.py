@@ -11,6 +11,50 @@ import av
 # Initialize Streamlit Page Config
 st.set_page_config(page_title="DetectXpress Advanced", page_icon="👁️", layout="wide")
 
+# Inject Custom CSS for Premium Glassmorphic Theme
+st.markdown("""
+<style>
+    /* Dark space-gradient background */
+    .stApp {
+        background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+        color: #f8fafc;
+    }
+    
+    /* Glowing gradient text for headers */
+    h1, h2, h3 {
+        background: -webkit-linear-gradient(45deg, #38bdf8, #818cf8);
+        -webkit-background-clip: text;
+        -webkit-text-fill-color: transparent;
+        font-weight: 800;
+    }
+    
+    /* Style the sidebar */
+    [data-testid="stSidebar"] {
+        background: rgba(15, 23, 42, 0.7);
+        backdrop-filter: blur(15px);
+        border-right: 1px solid rgba(255, 255, 255, 0.05);
+    }
+    
+    /* Glassmorphism for Streamlit info/success boxes */
+    .stAlert {
+        background: rgba(255, 255, 255, 0.05) !important;
+        backdrop-filter: blur(10px) !important;
+        border: 1px solid rgba(255, 255, 255, 0.1) !important;
+        border-radius: 12px !important;
+        color: #e2e8f0 !important;
+    }
+    
+    /* Center the WebRTC video player */
+    [data-testid="stWebRtc"] {
+        display: flex;
+        justify-content: center;
+        border-radius: 15px;
+        overflow: hidden;
+        box-shadow: 0 10px 30px -10px rgba(56, 189, 248, 0.3);
+    }
+</style>
+""", unsafe_allow_html=True)
+
 st.title("👁️ DetectXpress - Advanced AI Vision Pro")
 st.markdown("### Real-Time Object Detection & Accident Prevention System")
 
@@ -300,29 +344,31 @@ class DetectXpressTransformer(VideoTransformerBase):
 
         return av.VideoFrame.from_ndarray(annotated, format="bgr24")
 
-st.markdown("### 📹 Live Feed")
-st.info("Click **Start** to allow browser camera access and begin processing.")
+# Sidebar for features
+with st.sidebar:
+    st.markdown("### 📊 System Status")
+    st.success("✅ YOLOv11m Running")
+    st.success("✅ Browser WebRTC Active")
+    
+    st.markdown("---")
+    st.markdown("### 🛡️ Active Features")
+    st.info("👁️ True EAR Drowsiness")
+    st.info("💯 Dynamic Safety Score")
+    st.info("🚗 Collision Prediction")
+    st.info("📏 Distance Estimation")
+    st.info("⚡ Speed Tracking")
+    st.info("🌙 Night Mode Auto-Enhance")
 
-webrtc_streamer(
-    key="detectxpress",
-    mode=WebRtcMode.SENDRECV,
-    video_processor_factory=DetectXpressTransformer,
-    media_stream_constraints={"video": True, "audio": False},
-    async_processing=True
-)
-
-st.markdown("---")
-st.markdown("### 📊 Features Running")
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.success("✅ Object Detection (YOLOv11x)")
-    st.success("✅ Drowsiness Detection (EAR)")
-    st.success("✅ Dynamic Safety Score")
+# Main Video Area
+col1, col2, col3 = st.columns([1, 4, 1])
 with col2:
-    st.success("✅ Collision Prediction")
-    st.success("✅ Speed Estimation")
-    st.success("✅ Distance Estimation")
-with col3:
-    st.success("✅ Browser WebRTC Support")
-    st.success("✅ Night Mode Auto-Enhance")
-    st.success("✅ Image Preprocessing")
+    st.markdown("### 📹 Secure Live Feed")
+    st.info("Click **Start** to allow browser camera access and begin processing locally.")
+
+    webrtc_streamer(
+        key="detectxpress",
+        mode=WebRtcMode.SENDRECV,
+        video_processor_factory=DetectXpressTransformer,
+        media_stream_constraints={"video": True, "audio": False},
+        async_processing=True
+    )
