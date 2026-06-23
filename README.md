@@ -1,4 +1,3 @@
-![DetectXpress Cover](https://drive.google.com/uc?export=view&id=15pyink_QV06XZ1ra7MtEqTx1FgkyO0oS)
 
 # 🏆 DetectXpress Ultimate Edition
 ### *Advanced Real-Time Driver Assistance System (ADAS)*
