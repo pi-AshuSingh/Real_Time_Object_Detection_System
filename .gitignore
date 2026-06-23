@@ -1,0 +1,21 @@
+# Ignore virtual environment
+venv/
+.venv/
+.history/
+__pycache__/
+*.pyc
+
+# YOLO cache
+runs/
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# Uploads & local results
+static/uploads/
+
+# IDE settings
+.vscode/
+.idea/
+.DS_Store
