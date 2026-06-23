@@ -69,8 +69,8 @@ st.markdown("### Real-Time Object Detection & Accident Prevention System")
 # Load models once and cache them globally
 @st.cache_resource
 def load_models():
-    print("Loading YOLOv11m...")
-    yolo_model = YOLO("yolo11m.pt")
+    print("Loading YOLOv11x...")
+    yolo_model = YOLO("yolo11x.pt")
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
     return yolo_model, face_cascade, eye_cascade
@@ -279,7 +279,7 @@ class DetectXpressTransformer(VideoTransformerBase):
         processed = self.preprocess_frame_for_detection(img)
         
         # YOLO inference
-        results = model(processed, conf=0.40, iou=0.45, imgsz=640, verbose=False)
+        results = model(processed, conf=0.40, iou=0.45, imgsz=1280, augment=True, verbose=False)
         
         detections = []
         closest_dist = None
@@ -381,7 +381,7 @@ class DetectXpressTransformer(VideoTransformerBase):
 # Sidebar for features
 with st.sidebar:
     st.markdown("### 📊 System Status")
-    st.success("✅ YOLOv11m Running")
+    st.success("✅ YOLOv11x Running")
     st.success("✅ Browser WebRTC Active")
     
     st.markdown("---")
