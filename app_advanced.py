@@ -162,8 +162,8 @@ class DetectXpressTransformer(VideoTransformerBase):
                 self.speak("Lane departure warning", cooldown=10)
                 self.stats['lane_departures'] += 1
 
-        # YOLO Inference
-        results = model(img, conf=0.40, iou=0.45, imgsz=1280, augment=True, verbose=False)
+        # YOLO Inference (Optimized for real-time: no augment, standard imgsz, better confidence threshold)
+        results = model(img, conf=0.25, iou=0.45, verbose=False)
         
         detections = []
         closest_dist = None
