@@ -19,3 +19,6 @@ static/uploads/
 .vscode/
 .idea/
 .DS_Store
+*.log
+hang_trace.txt
+logs/

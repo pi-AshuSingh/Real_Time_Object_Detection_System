@@ -69,9 +69,9 @@ eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml
 smile_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_smile.xml')
 print("✅ Facial analysis cascades loaded!")
 
-print("🔄 Loading YOLOv11 model (Latest & Fastest)...")
-model = YOLO("yolo11s.pt")
-print("✅ YOLOv11 model loaded! (22% faster than YOLOv8)")
+print("🔄 Loading YOLOv11 X-Large model (Maximum Accuracy)...")
+model = YOLO("yolo11x.pt")
+print("✅ YOLOv11 X-Large model loaded!")
 
 # YOLOv11 uses standard COCO classes (80 objects)
 COCO_CLASSES = model.names  # Get class names from model
@@ -450,106 +450,86 @@ def get_stats():
     })
 
 def calculate_safety_score():
-    """Calculate dynamic safety score with time-decay and recovery mechanism"""
+    """Calculate dynamic safety score with fast time-decay and smooth recovery"""
     current_time = time.time()
     uptime_minutes = (current_time - stats['session_start']) / 60
     
     # Start with perfect score of 100
     score = 100
     
-    # If just started (less than 10 seconds), show initializing
-    if uptime_minutes < 0.17:  # Less than 10 seconds
-        return 85  # Show "initializing" score
+    # If just started (less than 5 seconds), show initializing
+    if uptime_minutes < 0.08:
+        return 85
     
-    # Time-based decay: only count recent alerts from alert_history
-    # This allows the score to recover as old alerts "fade away"
-    recent_5min = current_time - (5 * 60)    # Last 5 minutes
-    recent_2min = current_time - (2 * 60)    # Last 2 minutes
-    recent_1min = current_time - (1 * 60)    # Last 1 minute
+    # Fast Time-based decay: only count very recent alerts
+    recent_30sec = current_time - 30
+    recent_60sec = current_time - 60
+    recent_90sec = current_time - 90
     
     # Count alerts by recency and severity
-    very_recent_critical = 0  # Last 1 min
-    recent_critical = 0       # Last 2 min
-    older_critical = 0        # 2-5 min ago
-    recent_warnings = 0       # Last 5 min
-    drowsiness_recent = 0     # Last 2 min
+    critical_30s = 0
+    critical_60s = 0
+    critical_90s = 0
+    warnings_recent = 0
+    drowsiness_recent = 0
+    
+    last_critical_time = 0
     
     for alert in stats['alert_history']:
         alert_time = alert.get('timestamp', current_time)
         alert_level = alert.get('level', '')
         alert_type = alert.get('type', '')
         
-        # Drowsiness detection
+        # Track last critical for recovery calculation
+        if alert_level == 'CRITICAL' and alert_time > last_critical_time:
+            last_critical_time = alert_time
+            
+        # Drowsiness detection (Last 60s)
         if 'drowsiness' in alert_type.lower() or 'eyes closed' in alert_type.lower():
-            if alert_time >= recent_2min:
+            if alert_time >= recent_60sec:
                 drowsiness_recent += 1
-        
-        # Critical alerts with time decay
+                
+        # Critical alerts with fast decay
         if alert_level == 'CRITICAL':
-            if alert_time >= recent_1min:
-                very_recent_critical += 1
-            elif alert_time >= recent_2min:
-                recent_critical += 1
-            elif alert_time >= recent_5min:
-                older_critical += 1
+            if alert_time >= recent_30sec:
+                critical_30s += 1
+            elif alert_time >= recent_60sec:
+                critical_60s += 1
+            elif alert_time >= recent_90sec:
+                critical_90s += 1
+                
+        # Warnings (Last 60s)
+        elif alert_level == 'WARNING' and alert_time >= recent_60sec:
+            warnings_recent += 1
+            
+    # Progressive penalties (faster decay)
+    score -= critical_30s * 15   # Last 30s: heavy penalty
+    score -= critical_60s * 5    # 30-60s: medium penalty
+    score -= critical_90s * 2    # 60-90s: light penalty
+    score -= drowsiness_recent * 10
+    score -= warnings_recent * 3
+    
+    # Dynamic Recovery System
+    time_since_last_critical = current_time - last_critical_time
+    if last_critical_time == 0:
+        time_since_last_critical = uptime_minutes * 60  # Safe since start
         
-        # Warnings
-        elif alert_level == 'WARNING' and alert_time >= recent_5min:
-            recent_warnings += 1
-    
-    # Progressive penalties (more recent = more severe)
-    score -= very_recent_critical * 20   # Last 1 min: -20 per alert
-    score -= recent_critical * 12        # Last 2 min: -12 per alert
-    score -= older_critical * 6          # 2-5 min ago: -6 per alert
-    score -= drowsiness_recent * 10      # Drowsiness: -10 per alert
-    score -= recent_warnings * 3         # Warnings: -3 per alert
-    
-    # DEBUG: Print score calculation details every 5 seconds
-    if hasattr(calculate_safety_score, 'last_debug') and (current_time - calculate_safety_score.last_debug) < 5:
-        pass  # Skip debug output
-    else:
-        calculate_safety_score.last_debug = current_time
-        print(f"\n🔍 SAFETY SCORE DEBUG:")
-        print(f"   Uptime: {uptime_minutes:.1f} min")
-        print(f"   Alert History Count: {len(stats['alert_history'])}")
-        print(f"   Very Recent Critical (1min): {very_recent_critical}")
-        print(f"   Recent Critical (2min): {recent_critical}")
-        print(f"   Older Critical (5min): {older_critical}")
-        print(f"   Drowsiness Recent: {drowsiness_recent}")
-        print(f"   Recent Warnings: {recent_warnings}")
-        print(f"   Score before bonuses: {score}")
-    
-    # IMPROVED RECOVERY SYSTEM - allows score to recover from 0
-    if len(stats['alert_history']) == 0 and uptime_minutes > 1:
-        # Perfect score for clean session
-        score = 100
-    elif very_recent_critical == 0 and recent_critical == 0 and drowsiness_recent == 0:
-        # No critical/drowsiness alerts in last 2 minutes - STRONG recovery bonus
-        # This is the key fix: bigger bonus to overcome old alert penalties
-        time_since_last_critical = 2  # At least 2 minutes safe
-        recovery_bonus = min(30, int(time_since_last_critical * 10))  # Up to +30 bonus
+    if critical_30s == 0 and drowsiness_recent == 0:
+        # Dynamic bonus based on real seconds since last critical event
+        # Earn +1 score back for every second of safe driving (up to +30)
+        recovery_bonus = min(30, int(time_since_last_critical * 0.5))
         score += recovery_bonus
         
-        # Additional bonus for sustained good behavior
-        if older_critical == 0 and recent_warnings == 0:
-            score += 20  # Extra +20 if completely clean for 5+ minutes
-    
-    # Active monitoring bonus (show system is working)
+        # Extra bonus if totally clean for 60s
+        if critical_60s == 0 and warnings_recent == 0:
+            score += 15
+            
+    # Active monitoring bonus
     if stats['total_detections'] > 10:
-        score += 5  # Increased from 2 to 5 for better recovery
-    
-    # Special recovery mode: If score is at/near 0 and no recent alerts, boost it
-    if score <= 10 and very_recent_critical == 0 and recent_critical == 0:
-        score = max(score, 40)  # Minimum 40% if no critical alerts in 2 minutes
-    
-    # Ensure score stays within valid range
+        score += 5
+        
+    # Ensure score stays within valid range (0-100)
     final_score = max(0, min(100, int(score)))
-    
-    # DEBUG: Print final score
-    if hasattr(calculate_safety_score, 'last_debug') and (current_time - calculate_safety_score.last_debug) < 5:
-        pass
-    else:
-        print(f"   Final Score: {final_score}\n")
     
     return final_score
 
@@ -599,8 +579,10 @@ def generate_frames():
         
         # Run YOLO detection with enhanced parameters for better accuracy
         results = model(processed_frame, 
-                       conf=0.48,  # Increased from 0.40 for higher accuracy
-                       iou=0.42,   # Lower IOU for better object separation
+                       conf=0.40,  # Lowered slightly to detect more objects
+                       iou=0.45,   # Adjusted IOU
+                       imgsz=1280, # Maximum inference resolution
+                       augment=True, # Test-Time Augmentation for max accuracy
                        max_det=150, 
                        verbose=False,
                        agnostic_nms=True)  # Improved non-max suppression
@@ -949,8 +931,8 @@ if __name__ == '__main__':
     
     print("\n🌐 STARTING SERVER...")
     print("="*70)
-    print(f"✅ Open browser: http://127.0.0.1:5001")
-    print(f"✅ Mobile access: http://YOUR_LOCAL_IP:5001")
+    print(f"✅ Open browser: http://127.0.0.1:5005")
+    print(f"✅ Mobile access: http://YOUR_LOCAL_IP:5005")
     print("="*70 + "\n")
     
-    app.run(host='0.0.0.0', port=5001, debug=False, threaded=True)
+    app.run(host='0.0.0.0', port=5005, debug=False, threaded=True)
