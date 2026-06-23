@@ -17,8 +17,8 @@ st.markdown("### Real-Time Object Detection & Accident Prevention System")
 # Load models once and cache them globally
 @st.cache_resource
 def load_models():
-    print("Loading YOLOv11x...")
-    yolo_model = YOLO("yolo11x.pt")
+    print("Loading YOLOv11m...")
+    yolo_model = YOLO("yolo11m.pt")
     face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
     eye_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_eye.xml')
     return yolo_model, face_cascade, eye_cascade
@@ -210,7 +210,7 @@ class DetectXpressTransformer(VideoTransformerBase):
         if self.stats['total_detections'] > 10: score += 5
         return max(0, min(100, int(score)))
 
-    def transform(self, frame):
+    def recv(self, frame):
         img = frame.to_ndarray(format="bgr24")
         
         # Night mode
@@ -223,7 +223,7 @@ class DetectXpressTransformer(VideoTransformerBase):
         processed = self.preprocess_frame_for_detection(img)
         
         # YOLO inference
-        results = model(processed, conf=0.40, iou=0.45, imgsz=1280, augment=True, verbose=False)
+        results = model(processed, conf=0.40, iou=0.45, imgsz=640, verbose=False)
         
         detections = []
         for result in results:
