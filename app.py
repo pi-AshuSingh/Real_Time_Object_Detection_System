@@ -11,6 +11,8 @@ import pandas as pd
 from datetime import datetime
 import streamlit.components.v1 as components
 from fpdf import FPDF
+import matplotlib.pyplot as plt
+import io
 
 # Initialize Streamlit Page Config
 st.set_page_config(page_title="DetectXpress Ultimate", page_icon="🏆", layout="wide")
@@ -415,6 +417,40 @@ def generate_pdf_report(data):
         verdict = "POOR: The driver exhibited highly dangerous behavior. Immediate intervention recommended."
         
     pdf.multi_cell(0, 8, verdict)
+
+    # Telemetry Graphs
+    pdf.add_page()
+    pdf.set_font("Helvetica", "B", 14)
+    pdf.cell(0, 10, "6. Telemetry Graphs", new_x="LMARGIN", new_y="NEXT")
+    
+    def plot_to_bytes(title, data_list, ylabel, color):
+        if not data_list: return None
+        plt.figure(figsize=(8, 4))
+        times = [x[0] for x in data_list]
+        vals = [x[1] for x in data_list]
+        start_t = times[0]
+        rel_times = [t - start_t for t in times]
+        
+        plt.plot(rel_times, vals, color=color, linewidth=2)
+        plt.title(title)
+        plt.xlabel("Time (seconds)")
+        plt.ylabel(ylabel)
+        plt.grid(True, alpha=0.3)
+        plt.tight_layout()
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=150)
+        plt.close()
+        return buf
+
+    buf_score = plot_to_bytes("Safety Score vs Time", data['score_timeline'], "Score", "#38bdf8")
+    if buf_score: pdf.image(buf_score, x=10, y=30, w=190)
+    
+    buf_ear = plot_to_bytes("Drowsiness (EAR) vs Time", data['ear_timeline'], "Eye Aspect Ratio", "#fbbf24")
+    if buf_ear: pdf.image(buf_ear, x=10, y=120, w=190)
+    
+    buf_speed = plot_to_bytes("Max Target Speed vs Time", data['speed_timeline'], "Speed (m/s)", "#a855f7")
+    if buf_speed: pdf.image(buf_speed, x=10, y=210, w=190)
     
     return bytes(pdf.output())
 
@@ -435,7 +471,8 @@ if ctx.state.playing:
             
             st.session_state['report_data'] = {
                 'start': proc.session_start, 'stats': proc.stats, 'eco': proc.eco_score,
-                'stress': proc.stress_level, 'score_timeline': list(proc.score_timeline)
+                'stress': proc.stress_level, 'score_timeline': list(proc.score_timeline),
+                'ear_timeline': list(proc.ear_timeline), 'speed_timeline': list(proc.speed_timeline)
             }
             
             # Update Metrics Grid
