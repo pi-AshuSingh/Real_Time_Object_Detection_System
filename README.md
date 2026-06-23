@@ -14,6 +14,16 @@
 
 ---
 
+## 🌐 Live Demo
+
+Experience the DetectXpress Ultimate Edition directly in your browser:
+
+**👉 [Launch Live Application](https://detect-xpress.streamlit.app/)**
+
+> *Note: For the best experience, ensure your browser has camera permissions enabled to test the real-time detection capabilities.*
+
+---
+
 ## 🌟 The 10 Advanced Features
 
 | Feature | Description | Physics / Logic Engine |
